@@ -1,0 +1,266 @@
+[
+    {
+      "name": "ClaimImpl",
+      "type": "impl",
+      "interface_name": "contracts::claim::ClaimContract::IClaim"
+    },
+    {
+      "name": "core::integer::u256",
+      "type": "struct",
+      "members": [
+        {
+          "name": "low",
+          "type": "core::integer::u128"
+        },
+        {
+          "name": "high",
+          "type": "core::integer::u128"
+        }
+      ]
+    },
+    {
+      "name": "core::bool",
+      "type": "enum",
+      "variants": [
+        {
+          "name": "False",
+          "type": "()"
+        },
+        {
+          "name": "True",
+          "type": "()"
+        }
+      ]
+    },
+    {
+      "name": "contracts::claim::ClaimContract::IClaim",
+      "type": "interface",
+      "items": [
+        {
+          "name": "generate_claim_code",
+          "type": "function",
+          "inputs": [
+            {
+              "name": "code",
+              "type": "core::felt252"
+            },
+            {
+              "name": "amount",
+              "type": "core::integer::u256"
+            }
+          ],
+          "outputs": [],
+          "state_mutability": "external"
+        },
+        {
+          "name": "add_admin",
+          "type": "function",
+          "inputs": [
+            {
+              "name": "admin",
+              "type": "core::starknet::contract_address::ContractAddress"
+            }
+          ],
+          "outputs": [],
+          "state_mutability": "external"
+        },
+        {
+          "name": "remove_admin",
+          "type": "function",
+          "inputs": [
+            {
+              "name": "admin",
+              "type": "core::starknet::contract_address::ContractAddress"
+            }
+          ],
+          "outputs": [],
+          "state_mutability": "external"
+        },
+        {
+          "name": "claim_tokens",
+          "type": "function",
+          "inputs": [
+            {
+              "name": "code",
+              "type": "core::felt252"
+            }
+          ],
+          "outputs": [],
+          "state_mutability": "external"
+        },
+        {
+          "name": "get_claim_code_info",
+          "type": "function",
+          "inputs": [
+            {
+              "name": "code",
+              "type": "core::felt252"
+            }
+          ],
+          "outputs": [
+            {
+              "type": "(core::integer::u256, core::bool)"
+            }
+          ],
+          "state_mutability": "view"
+        },
+        {
+          "name": "get_total_claimed",
+          "type": "function",
+          "inputs": [],
+          "outputs": [
+            {
+              "type": "core::integer::u256"
+            }
+          ],
+          "state_mutability": "view"
+        },
+        {
+          "name": "is_code_used",
+          "type": "function",
+          "inputs": [
+            {
+              "name": "code",
+              "type": "core::felt252"
+            }
+          ],
+          "outputs": [
+            {
+              "type": "core::bool"
+            }
+          ],
+          "state_mutability": "view"
+        },
+        {
+          "name": "is_admin",
+          "type": "function",
+          "inputs": [
+            {
+              "name": "admin",
+              "type": "core::starknet::contract_address::ContractAddress"
+            }
+          ],
+          "outputs": [
+            {
+              "type": "core::bool"
+            }
+          ],
+          "state_mutability": "view"
+        }
+      ]
+    },
+    {
+      "name": "constructor",
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "admin_address",
+          "type": "core::starknet::contract_address::ContractAddress"
+        },
+        {
+          "name": "token_address",
+          "type": "core::starknet::contract_address::ContractAddress"
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "name": "contracts::claim::ClaimContract::ClaimCodeGenerated",
+      "type": "event",
+      "members": [
+        {
+          "kind": "key",
+          "name": "code",
+          "type": "core::felt252"
+        },
+        {
+          "kind": "data",
+          "name": "amount",
+          "type": "core::integer::u256"
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "name": "contracts::claim::ClaimContract::TokensClaimed",
+      "type": "event",
+      "members": [
+        {
+          "kind": "key",
+          "name": "code",
+          "type": "core::felt252"
+        },
+        {
+          "kind": "data",
+          "name": "recipient",
+          "type": "core::starknet::contract_address::ContractAddress"
+        },
+        {
+          "kind": "data",
+          "name": "amount",
+          "type": "core::integer::u256"
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "name": "contracts::claim::ClaimContract::AdminAdded",
+      "type": "event",
+      "members": [
+        {
+          "kind": "data",
+          "name": "admin",
+          "type": "core::starknet::contract_address::ContractAddress"
+        },
+        {
+          "kind": "data",
+          "name": "added_by",
+          "type": "core::starknet::contract_address::ContractAddress"
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "name": "contracts::claim::ClaimContract::AdminRemoved",
+      "type": "event",
+      "members": [
+        {
+          "kind": "data",
+          "name": "admin",
+          "type": "core::starknet::contract_address::ContractAddress"
+        },
+        {
+          "kind": "data",
+          "name": "removed_by",
+          "type": "core::starknet::contract_address::ContractAddress"
+        }
+      ]
+    },
+    {
+      "kind": "enum",
+      "name": "contracts::claim::ClaimContract::Event",
+      "type": "event",
+      "variants": [
+        {
+          "kind": "nested",
+          "name": "ClaimCodeGenerated",
+          "type": "contracts::claim::ClaimContract::ClaimCodeGenerated"
+        },
+        {
+          "kind": "nested",
+          "name": "TokensClaimed",
+          "type": "contracts::claim::ClaimContract::TokensClaimed"
+        },
+        {
+          "kind": "nested",
+          "name": "AdminAdded",
+          "type": "contracts::claim::ClaimContract::AdminAdded"
+        },
+        {
+          "kind": "nested",
+          "name": "AdminRemoved",
+          "type": "contracts::claim::ClaimContract::AdminRemoved"
+        }
+      ]
+    }
+  ]

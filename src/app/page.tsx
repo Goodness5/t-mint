@@ -1,33 +1,23 @@
 'use client';
 
 import { useState } from 'react';
-import { WalletState } from '@/lib/wallet';
+// No need to import WalletState - we'll use the hook directly
 import WalletButton from '@/components/WalletButton';
 import ClaimInterface from '@/components/ClaimInterface';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 export default function Home() {
-  const [walletState, setWalletState] = useState<WalletState>({
-    account: null,
-    address: null,
-    isConnected: false,
-    provider: null,
-  });
-
-  const handleWalletConnected = (newWalletState: WalletState) => {
-    setWalletState(newWalletState);
+  const handleWalletConnected = (walletAddress: string) => {
+    console.log('Wallet connected:', walletAddress);
   };
 
   const handleWalletDisconnected = () => {
-    setWalletState({
-      account: null,
-      address: null,
-      isConnected: false,
-      provider: null,
-    });
+    console.log('Wallet disconnected');
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-purple-900">
+    <ErrorBoundary>
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-purple-900">
       {/* Header */}
       <header className="w-full p-6">
         <div className="max-w-4xl mx-auto flex justify-between items-center">
@@ -61,7 +51,7 @@ export default function Home() {
         {/* Claim Interface */}
         <div className="max-w-2xl mx-auto">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 border border-gray-200 dark:border-gray-700">
-            <ClaimInterface walletState={walletState} />
+            <ClaimInterface />
           </div>
         </div>
 
@@ -116,6 +106,7 @@ export default function Home() {
           </p>
         </div>
       </footer>
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 }

@@ -45,8 +45,8 @@ export default function AdminPage() {
     getTotalClaimed
   } = useStarknetWallet();
   
-  // Amount is now fixed at 1 STRK
   const [numClaims, setNumClaims] = useState('10');
+  const [amountPerClaim, setAmountPerClaim] = useState('1'); // Amount in STRK
   const [adminStatus, setAdminStatus] = useState<AdminStatus>({ type: 'idle', message: '' });
   const [statusText, setStatusText] = useState('');
   
@@ -57,12 +57,17 @@ export default function AdminPage() {
   const [currentRoot, setCurrentRoot] = useState<string>('');
   const [totalClaimed, setTotalClaimed] = useState<string>('0');
 
-  // Amount is now fixed at 1 STRK
-  const FIXED_AMOUNT_STRK = 1;
-  const FIXED_AMOUNT_WEI = BigInt(FIXED_AMOUNT_STRK * 10**18);
+  // Convert STRK amount to wei
+  const getAmountInWei = (strkAmount: string): bigint => {
+    const amount = parseFloat(strkAmount);
+    if (isNaN(amount) || amount <= 0) {
+      throw new Error('Invalid amount');
+    }
+    return BigInt(Math.floor(amount * 10**18));
+  };
 
-  // Generate claims with simple amounts (replacement for removed demo function)
-  const generateClaimsWithStrings = (numClaims: number) => {
+  // Generate claims with user-specified amounts
+  const generateClaimsWithStrings = (numClaims: number, amountInWei: bigint) => {
     return Array.from({ length: numClaims }, (_, index) => {
       // Generate a random hex code (8 characters: 0-9, A-F)
       const hexCode = Array.from({ length: 8 }, () => 
@@ -74,7 +79,7 @@ export default function AdminPage() {
       
       return {
         code,
-        amount: FIXED_AMOUNT_WEI, // Simple bigint amount
+        amount: amountInWei, // Use user-specified amount
         codeString,
       };
     });
@@ -95,10 +100,7 @@ export default function AdminPage() {
             id: claim.id,
             code: BigInt(claim.code),
             codeString: claim.codeString,
-            amount: {
-              low: BigInt(claim.amount.low),
-              high: BigInt(claim.amount.high)
-            },
+            amount: BigInt(claim.amount), // Simple amount as bigint
             amountString: claim.amountString,
             timestamp: new Date(claim.timestamp)
           })),
@@ -171,28 +173,42 @@ export default function AdminPage() {
       return;
     }
 
+    if (!amountPerClaim.trim()) {
+      setAdminStatus({ type: 'error', message: 'Please enter the amount per claim!' });
+      return;
+    }
+
     if (!account) {
       setAdminStatus({ type: 'error', message: 'Please connect your wallet first!' });
       return;
     }
 
     const claimsNum = parseInt(numClaims);
+    const amountPerClaimNum = parseFloat(amountPerClaim);
 
     if (isNaN(claimsNum) || claimsNum <= 0 || claimsNum > 100) {
       setAdminStatus({ type: 'error', message: 'Please enter a valid number of claims (1-100)!' });
-        return;
-      }
+      return;
+    }
+
+    if (isNaN(amountPerClaimNum) || amountPerClaimNum <= 0 || amountPerClaimNum > 1000) {
+      setAdminStatus({ type: 'error', message: 'Please enter a valid amount (0.1-1000 STRK)!' });
+      return;
+    }
       
     setAdminStatus({ type: 'loading', message: 'Creating your claim campaign...' });
     setStatusText("Building the campaign of digital fortune...");
 
     try {
+      // Convert amount to wei
+      const amountInWei = getAmountInWei(amountPerClaim);
+      
       // Generate claims with the specified amount and code strings
-      const claimsWithStrings = generateClaimsWithStrings(claimsNum);
-      // Use the SAME amounts that are in the generated claims (1 STRK fixed)
+      const claimsWithStrings = generateClaimsWithStrings(claimsNum, amountInWei);
+      // Use the SAME amounts that are in the generated claims
       const claims = claimsWithStrings.map(claim => ({
         code: claim.code,
-        amount: claim.amount // Use the original amount from generateClaimsWithStrings
+        amount: claim.amount // Use the user-specified amount
       }));
 
       // Build Merkle tree
@@ -204,7 +220,7 @@ export default function AdminPage() {
         code: claim.code,
         codeString: claim.codeString, // Use the generated code string directly
         amount: claim.amount,
-        amountString: '1', // Fixed amount is 1 STRK
+        amountString: amountPerClaim, // User-specified amount
         timestamp: new Date()
       }));
 
@@ -455,14 +471,22 @@ export default function AdminPage() {
               </p>
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <div>
+                    <label htmlFor="amountPerClaim" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       STRK Amount per Claim
-                  </label>
-                  <div className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
-                    1 STRK (Fixed Amount)
+                    </label>
+                    <input
+                      id="amountPerClaim"
+                      type="number"
+                      min="0.1"
+                      max="1000"
+                      step="0.1"
+                      value={amountPerClaim}
+                      onChange={(e) => setAmountPerClaim(e.target.value)}
+                      placeholder="Enter amount in STRK..."
+                      className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                    />
                   </div>
-                </div>
                   <div>
                     <label htmlFor="numClaims" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       Number of Claims

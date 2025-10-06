@@ -6,12 +6,26 @@ use core::num::traits::Zero;
 // Define the contract interface
 #[starknet::interface]
 pub trait IClaim<TContractState> {
-    fn set_merkle_root(ref self: TContractState, new_root: felt252);
+    // Public functions
     fn claim_tokens(ref self: TContractState, code: felt252, amount: u256, proof: Span<felt252>);
     fn get_merkle_root(self: @TContractState) -> felt252;
     fn get_total_claimed(self: @TContractState) -> u256;
     fn is_leaf_claimed(self: @TContractState, leaf_hash: felt252) -> bool;
     fn is_code_claimed(self: @TContractState, code: felt252, amount: u256) -> bool;
+    fn is_admin(self: @TContractState, address: ContractAddress) -> bool;
+    fn get_admin_count(self: @TContractState) -> u32;
+    
+    // Admin functions
+    fn set_merkle_root(ref self: TContractState, new_root: felt252);
+    fn add_admin(ref self: TContractState, admin_address: ContractAddress);
+    fn remove_admin(ref self: TContractState, admin_address: ContractAddress);
+    fn pause_contract(ref self: TContractState);
+    fn unpause_contract(ref self: TContractState);
+    fn set_token_address(ref self: TContractState, new_token: ContractAddress);
+    fn withdraw_tokens(ref self: TContractState, amount: u256);
+    fn withdraw_all_tokens(ref self: TContractState);
+    fn reset_campaign(ref self: TContractState);
+    fn emergency_withdraw(ref self: TContractState);
 }
 
 #[starknet::contract]
@@ -40,6 +54,12 @@ pub mod ClaimContract {
 
     // Internal impl for Ownable
     impl OwnableInternalImpl = OwnableComponent::InternalImpl<ContractState>;
+
+    // Modifier to check if caller is admin
+    fn only_admin(self: @ContractState) {
+        let caller = get_caller_address();
+        assert!(self.admins.entry(caller).read(), "Caller is not an admin");
+    }
 
     // Custom Poseidon-based Merkle proof verification with commutative hashing
     fn verify_poseidon_proof(proof: Span<felt252>, root: felt252, leaf: felt252) -> bool {
@@ -78,6 +98,9 @@ pub mod ClaimContract {
         merkle_root: felt252,
         claimed_leaves: Map<felt252, bool>,
         total_claimed: u256,
+        admins: Map<ContractAddress, bool>,
+        admin_count: u32,
+        paused: bool,
     }
 
     #[event]
@@ -87,6 +110,14 @@ pub mod ClaimContract {
         OwnableEvent: OwnableComponent::Event,
         MerkleRootUpdated: MerkleRootUpdated,
         TokensClaimed: TokensClaimed,
+        AdminAdded: AdminAdded,
+        AdminRemoved: AdminRemoved,
+        ContractPaused: ContractPaused,
+        ContractUnpaused: ContractUnpaused,
+        TokenAddressUpdated: TokenAddressUpdated,
+        TokensWithdrawn: TokensWithdrawn,
+        CampaignReset: CampaignReset,
+        EmergencyWithdraw: EmergencyWithdraw,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -106,24 +137,91 @@ pub mod ClaimContract {
         amount: u256,
     }
 
+    #[derive(Drop, starknet::Event)]
+    pub struct AdminAdded {
+        #[key]
+        admin: ContractAddress,
+        #[key]
+        added_by: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct AdminRemoved {
+        #[key]
+        admin: ContractAddress,
+        #[key]
+        removed_by: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct ContractPaused {
+        #[key]
+        admin: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct ContractUnpaused {
+        #[key]
+        admin: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct TokenAddressUpdated {
+        #[key]
+        old_token: ContractAddress,
+        #[key]
+        new_token: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct TokensWithdrawn {
+        #[key]
+        admin: ContractAddress,
+        amount: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct CampaignReset {
+        #[key]
+        admin: ContractAddress,
+        old_root: felt252,
+        new_root: felt252,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct EmergencyWithdraw {
+        #[key]
+        admin: ContractAddress,
+        amount: u256,
+    }
+
     #[constructor]
     fn constructor(ref self: ContractState, owner_address: ContractAddress, token_address: ContractAddress, initial_merkle_root: felt252) {
         self.ownable.initializer(owner_address);
         self.token.write(token_address);
         self.merkle_root.write(initial_merkle_root);
         self.total_claimed.write(Zero::zero());
+        self.paused.write(false);
+        self.admin_count.write(0);
+        
+        // Add owner as first admin
+        self.admins.entry(owner_address).write(true);
+        self.admin_count.write(1);
     }
 
     #[abi(embed_v0)]
     pub impl ClaimImpl of super::IClaim<ContractState> {
         fn set_merkle_root(ref self: ContractState, new_root: felt252) {
-            self.ownable.assert_only_owner();
+            only_admin(@self);
             let old_root = self.merkle_root.read();
             self.merkle_root.write(new_root);
             self.emit(Event::MerkleRootUpdated(MerkleRootUpdated { old_root, new_root }));
         }
 
         fn claim_tokens(ref self: ContractState, code: felt252, amount: u256, proof: Span<felt252>) {
+            // Check if contract is not paused
+            assert!(!self.paused.read(), "Contract is paused");
+            
             let caller = get_caller_address();
 
             let mut hash_state = PoseidonTrait::new();
@@ -174,6 +272,108 @@ pub mod ClaimContract {
             hash_state = hash_state.update_with(amount.high);
             let leaf_hash = hash_state.finalize();
             self.claimed_leaves.entry(leaf_hash).read()
+        }
+
+        fn is_admin(self: @ContractState, address: ContractAddress) -> bool {
+            self.admins.entry(address).read()
+        }
+
+        fn get_admin_count(self: @ContractState) -> u32 {
+            self.admin_count.read()
+        }
+
+        // Admin management functions
+        fn add_admin(ref self: ContractState, admin_address: ContractAddress) {
+            self.ownable.assert_only_owner();
+            let caller = get_caller_address();
+            
+            // Check if address is already an admin
+            assert!(!self.admins.entry(admin_address).read(), "Address is already an admin");
+            
+            self.admins.entry(admin_address).write(true);
+            let current_count = self.admin_count.read();
+            self.admin_count.write(current_count + 1);
+            
+            self.emit(Event::AdminAdded(AdminAdded { admin: admin_address, added_by: caller }));
+        }
+
+        fn remove_admin(ref self: ContractState, admin_address: ContractAddress) {
+            self.ownable.assert_only_owner();
+            let caller = get_caller_address();
+            
+            // Check if address is an admin
+            assert!(self.admins.entry(admin_address).read(), "Address is not an admin");
+            
+            // Prevent removing the last admin
+            let current_count = self.admin_count.read();
+            assert!(current_count > 1, "Cannot remove the last admin");
+            
+            self.admins.entry(admin_address).write(false);
+            self.admin_count.write(current_count - 1);
+            
+            self.emit(Event::AdminRemoved(AdminRemoved { admin: admin_address, removed_by: caller }));
+        }
+
+        // Admin functions
+        fn pause_contract(ref self: ContractState) {
+            only_admin(@self);
+            self.paused.write(true);
+            self.emit(Event::ContractPaused(ContractPaused { admin: get_caller_address() }));
+        }
+
+        fn unpause_contract(ref self: ContractState) {
+            only_admin(@self);
+            self.paused.write(false);
+            self.emit(Event::ContractUnpaused(ContractUnpaused { admin: get_caller_address() }));
+        }
+
+        fn set_token_address(ref self: ContractState, new_token: ContractAddress) {
+            only_admin(@self);
+            let old_token = self.token.read();
+            self.token.write(new_token);
+            self.emit(Event::TokenAddressUpdated(TokenAddressUpdated { old_token, new_token }));
+        }
+
+        fn withdraw_tokens(ref self: ContractState, amount: u256) {
+            only_admin(@self);
+            let caller = get_caller_address();
+            let token = self.token.read();
+            let dispatcher = IERC20Dispatcher { contract_address: token };
+            let success = IERC20DispatcherTrait::transfer(dispatcher, caller, amount);
+            assert!(success, "Token withdrawal failed");
+            self.emit(Event::TokensWithdrawn(TokensWithdrawn { admin: caller, amount }));
+        }
+
+        fn withdraw_all_tokens(ref self: ContractState) {
+            only_admin(@self);
+            let caller = get_caller_address();
+            let token = self.token.read();
+            let dispatcher = IERC20Dispatcher { contract_address: token };
+            let balance = IERC20DispatcherTrait::balance_of(dispatcher, starknet::contract_address_const::<0x0>());
+            let success = IERC20DispatcherTrait::transfer(dispatcher, caller, balance);
+            assert!(success, "Token withdrawal failed");
+            self.emit(Event::TokensWithdrawn(TokensWithdrawn { admin: caller, amount: balance }));
+        }
+
+        fn reset_campaign(ref self: ContractState) {
+            only_admin(@self);
+            let caller = get_caller_address();
+            let old_root = self.merkle_root.read();
+            let new_root = Zero::zero();
+            self.merkle_root.write(new_root);
+            self.total_claimed.write(Zero::zero());
+            self.emit(Event::CampaignReset(CampaignReset { admin: caller, old_root, new_root }));
+        }
+
+        fn emergency_withdraw(ref self: ContractState) {
+            only_admin(@self);
+            let caller = get_caller_address();
+            let token = self.token.read();
+            let dispatcher = IERC20Dispatcher { contract_address: token };
+            let balance = IERC20DispatcherTrait::balance_of(dispatcher, starknet::contract_address_const::<0x0>());
+            let success = IERC20DispatcherTrait::transfer(dispatcher, caller, balance);
+            assert!(success, "Emergency withdrawal failed");
+            self.emit(Event::EmergencyWithdraw(EmergencyWithdraw { admin: caller, amount: balance }));
         }
     }
 }

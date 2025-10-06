@@ -42,13 +42,34 @@ export default function AdminPage() {
     buildMerkleTree,
     setMerkleRoot,
     getMerkleRoot,
-    getTotalClaimed
+    getTotalClaimed,
+    // Admin management functions
+    isAdmin,
+    getAdminCount,
+    addAdmin,
+    removeAdmin,
+    pauseContract,
+    unpauseContract,
+    setTokenAddress,
+    withdrawTokens,
+    withdrawAllTokens,
+    resetCampaign,
+    emergencyWithdraw
   } = useStarknetWallet();
   
   const [numClaims, setNumClaims] = useState('10');
   const [amountPerClaim, setAmountPerClaim] = useState('1'); // Amount in STRK
   const [adminStatus, setAdminStatus] = useState<AdminStatus>({ type: 'idle', message: '' });
   const [statusText, setStatusText] = useState('');
+  
+  // Admin management state
+  const [newAdminAddress, setNewAdminAddress] = useState('');
+  const [removeAdminAddress, setRemoveAdminAddress] = useState('');
+  const [newTokenAddress, setNewTokenAddress] = useState('');
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [isCurrentUserAdmin, setIsCurrentUserAdmin] = useState(false);
+  const [adminCount, setAdminCount] = useState(0);
+  const [campaignStatus, setCampaignStatus] = useState<'none' | 'created' | 'activated'>('none');
   
   // Merkle tree data
   const [merkleData, setMerkleData] = useState<MerkleTreeData | null>(null);
@@ -118,8 +139,70 @@ export default function AdminPage() {
   useEffect(() => {
     if (isConnected && address) {
       loadContractStatus();
+      checkAdminStatus();
     }
   }, [isConnected, address]);
+
+  // Check campaign status when merkleData or contract status changes
+  useEffect(() => {
+    if (isConnected && address && contractStatus === 'connected') {
+      checkCampaignStatus();
+    }
+  }, [merkleData, contractStatus, isConnected, address]);
+
+  // Check admin status
+  const checkAdminStatus = async () => {
+    if (!address) {
+      console.log('🔍 No address available for admin check');
+      return;
+    }
+    
+    console.log('🔍 Checking admin status for address:', address);
+    try {
+      const adminStatus = await isAdmin(address);
+      const count = await getAdminCount();
+      console.log('🔍 Admin status result:', { adminStatus, count });
+      setIsCurrentUserAdmin(adminStatus);
+      setAdminCount(count);
+    } catch (error) {
+      console.error('❌ Failed to check admin status:', error);
+      // Set to false on error to be safe
+      setIsCurrentUserAdmin(false);
+      setAdminCount(0);
+    }
+  };
+
+  // Check campaign status by comparing database root with contract root
+  const checkCampaignStatus = async () => {
+    try {
+      console.log('🔍 Checking campaign status...');
+      
+      // Get contract's current root
+      const contractRoot = await getMerkleRoot();
+      console.log('🔍 Contract root:', contractRoot);
+      
+      // Get database root from merkleData
+      const dbRoot = merkleData?.root;
+      console.log('🔍 Database root:', dbRoot);
+      
+      if (!dbRoot) {
+        // No campaign created yet
+        setCampaignStatus('none');
+        console.log('🔍 Campaign status: none (no campaign created)');
+      } else if (contractRoot === dbRoot) {
+        // Campaign is activated (contract root matches database root)
+        setCampaignStatus('activated');
+        console.log('🔍 Campaign status: activated (contract root matches database root)');
+      } else {
+        // Campaign is created but not activated
+        setCampaignStatus('created');
+        console.log('🔍 Campaign status: created (database root does not match contract root)');
+      }
+    } catch (error) {
+      console.error('❌ Failed to check campaign status:', error);
+      setCampaignStatus('none');
+    }
+  };
 
   const handleWalletConnected = (walletAddress: string) => {
     console.log('Wallet connected:', walletAddress);
@@ -268,18 +351,25 @@ export default function AdminPage() {
       
       console.log('💾 Saving claims to database via API...');
       console.log('💾 Claims data:', claimsForDatabase);
+      console.log('💾 Sending adminAddress:', address);
+      
+      const requestBody = { 
+        claims: claimsForDatabase,
+        merkleRoot: root,
+        totalClaims: claimsForDatabase.length,
+        clearOld: true, // Flag to clear old claims
+        adminAddress: address // Include admin address for verification
+      };
+      
+      console.log('💾 Full request body:', requestBody);
+      
       try {
         const response = await fetch('/api/admin/save-claims', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ 
-            claims: claimsForDatabase,
-            merkleRoot: root,
-            totalClaims: claimsForDatabase.length,
-            clearOld: true // Flag to clear old claims
-          }),
+          body: JSON.stringify(requestBody),
         });
         
         const responseData = await response.json();
@@ -320,6 +410,11 @@ export default function AdminPage() {
       // Status message is set in the database save section above
       setStatusText("Your campaign is ready to make users happy!");
       
+      // Check campaign status after generating
+      setTimeout(() => {
+        checkCampaignStatus();
+      }, 1000);
+      
     } catch (error: any) {
       console.error('Generate Merkle tree failed:', error);
       setAdminStatus({ 
@@ -357,6 +452,11 @@ export default function AdminPage() {
         txHash: tx.transaction_hash
       });
       setStatusText("Your campaign is live and ready for users!");
+      
+      // Check campaign status after activation
+      setTimeout(() => {
+        checkCampaignStatus();
+      }, 1000);
       
     } catch (error: any) {
       console.error('Set Merkle root failed:', error);
@@ -398,6 +498,133 @@ export default function AdminPage() {
         type: 'error', 
         message: 'Failed to copy Merkle root to clipboard!' 
       });
+    }
+  };
+
+  // Admin management functions
+  const handleAddAdmin = async () => {
+    if (!newAdminAddress.trim()) {
+      setAdminStatus({ type: 'error', message: 'Please enter an admin address!' });
+      return;
+    }
+
+    setAdminStatus({ type: 'loading', message: 'Adding admin...' });
+    try {
+      const tx = await addAdmin(newAdminAddress);
+      await account?.waitForTransaction(tx.transaction_hash);
+      setAdminStatus({ type: 'success', message: 'Admin added successfully!' });
+      setNewAdminAddress('');
+      checkAdminStatus(); // Refresh admin status
+    } catch (error: any) {
+      setAdminStatus({ type: 'error', message: error.message || 'Failed to add admin!' });
+    }
+  };
+
+  const handleRemoveAdmin = async () => {
+    if (!removeAdminAddress.trim()) {
+      setAdminStatus({ type: 'error', message: 'Please enter an admin address!' });
+      return;
+    }
+
+    setAdminStatus({ type: 'loading', message: 'Removing admin...' });
+    try {
+      const tx = await removeAdmin(removeAdminAddress);
+      await account?.waitForTransaction(tx.transaction_hash);
+      setAdminStatus({ type: 'success', message: 'Admin removed successfully!' });
+      setRemoveAdminAddress('');
+      checkAdminStatus(); // Refresh admin status
+    } catch (error: any) {
+      setAdminStatus({ type: 'error', message: error.message || 'Failed to remove admin!' });
+    }
+  };
+
+  const handlePauseContract = async () => {
+    setAdminStatus({ type: 'loading', message: 'Pausing contract...' });
+    try {
+      const tx = await pauseContract();
+      await account?.waitForTransaction(tx.transaction_hash);
+      setAdminStatus({ type: 'success', message: 'Contract paused successfully!' });
+    } catch (error: any) {
+      setAdminStatus({ type: 'error', message: error.message || 'Failed to pause contract!' });
+    }
+  };
+
+  const handleUnpauseContract = async () => {
+    setAdminStatus({ type: 'loading', message: 'Unpausing contract...' });
+    try {
+      const tx = await unpauseContract();
+      await account?.waitForTransaction(tx.transaction_hash);
+      setAdminStatus({ type: 'success', message: 'Contract unpaused successfully!' });
+    } catch (error: any) {
+      setAdminStatus({ type: 'error', message: error.message || 'Failed to unpause contract!' });
+    }
+  };
+
+  const handleSetTokenAddress = async () => {
+    if (!newTokenAddress.trim()) {
+      setAdminStatus({ type: 'error', message: 'Please enter a token address!' });
+      return;
+    }
+
+    setAdminStatus({ type: 'loading', message: 'Updating token address...' });
+    try {
+      const tx = await setTokenAddress(newTokenAddress);
+      await account?.waitForTransaction(tx.transaction_hash);
+      setAdminStatus({ type: 'success', message: 'Token address updated successfully!' });
+      setNewTokenAddress('');
+    } catch (error: any) {
+      setAdminStatus({ type: 'error', message: error.message || 'Failed to update token address!' });
+    }
+  };
+
+  const handleWithdrawTokens = async () => {
+    if (!withdrawAmount.trim()) {
+      setAdminStatus({ type: 'error', message: 'Please enter an amount!' });
+      return;
+    }
+
+    const amount = BigInt(parseFloat(withdrawAmount) * 10**18);
+    setAdminStatus({ type: 'loading', message: 'Withdrawing tokens...' });
+    try {
+      const tx = await withdrawTokens(amount);
+      await account?.waitForTransaction(tx.transaction_hash);
+      setAdminStatus({ type: 'success', message: 'Tokens withdrawn successfully!' });
+      setWithdrawAmount('');
+    } catch (error: any) {
+      setAdminStatus({ type: 'error', message: error.message || 'Failed to withdraw tokens!' });
+    }
+  };
+
+  const handleWithdrawAllTokens = async () => {
+    setAdminStatus({ type: 'loading', message: 'Withdrawing all tokens...' });
+    try {
+      const tx = await withdrawAllTokens();
+      await account?.waitForTransaction(tx.transaction_hash);
+      setAdminStatus({ type: 'success', message: 'All tokens withdrawn successfully!' });
+    } catch (error: any) {
+      setAdminStatus({ type: 'error', message: error.message || 'Failed to withdraw all tokens!' });
+    }
+  };
+
+  const handleResetCampaign = async () => {
+    setAdminStatus({ type: 'loading', message: 'Resetting campaign...' });
+    try {
+      const tx = await resetCampaign();
+      await account?.waitForTransaction(tx.transaction_hash);
+      setAdminStatus({ type: 'success', message: 'Campaign reset successfully!' });
+    } catch (error: any) {
+      setAdminStatus({ type: 'error', message: error.message || 'Failed to reset campaign!' });
+    }
+  };
+
+  const handleEmergencyWithdraw = async () => {
+    setAdminStatus({ type: 'loading', message: 'Emergency withdrawal...' });
+    try {
+      const tx = await emergencyWithdraw();
+      await account?.waitForTransaction(tx.transaction_hash);
+      setAdminStatus({ type: 'success', message: 'Emergency withdrawal completed!' });
+    } catch (error: any) {
+      setAdminStatus({ type: 'error', message: error.message || 'Failed emergency withdrawal!' });
     }
   };
 
@@ -505,36 +732,46 @@ export default function AdminPage() {
                 </div>
 
                 <div className="flex gap-4">
-                <button
+                {/* Show different buttons based on campaign status */}
+                {campaignStatus === 'none' && (
+                  <button
                     onClick={handleGenerateMerkleTree}
-                  disabled={adminStatus.type === 'loading'}
-                  className={cn(
-                      "flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white rounded-lg font-medium transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg hover:shadow-xl",
-                    adminStatus.type === 'loading' && "animate-pulse"
-                  )}
-                >
-                  {adminStatus.type === 'loading' ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                      <TreePine className="w-5 h-5" />
-                  )}
-                  <span>
-                      {adminStatus.type === 'loading' ? 'Creating Campaign...' : 'Create Campaign'}
-                  </span>
-                </button>
+                    disabled={adminStatus.type === 'loading'}
+                    className={cn(
+                      "w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white rounded-lg font-medium transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg hover:shadow-xl",
+                      adminStatus.type === 'loading' && "animate-pulse"
+                    )}
+                  >
+                    {adminStatus.type === 'loading' ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                        <TreePine className="w-5 h-5" />
+                    )}
+                    <span>
+                        {adminStatus.type === 'loading' ? 'Creating Campaign...' : 'Create Campaign'}
+                    </span>
+                  </button>
+                )}
 
-                  {merkleData && (
-                    <button
-                      onClick={handleSetMerkleRoot}
-                      disabled={adminStatus.type === 'loading'}
-                      className={cn(
-                        "flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-lg font-medium transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg hover:shadow-xl"
-                      )}
-                    >
-                      <Hash className="w-5 h-5" />
-                      <span>Activate Campaign</span>
-                    </button>
-                  )}
+                {campaignStatus === 'created' && (
+                  <button
+                    onClick={handleSetMerkleRoot}
+                    disabled={adminStatus.type === 'loading'}
+                    className={cn(
+                      "w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-lg font-medium transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg hover:shadow-xl"
+                    )}
+                  >
+                    <Hash className="w-5 h-5" />
+                    <span>Activate Campaign</span>
+                  </button>
+                )}
+
+                {campaignStatus === 'activated' && (
+                  <div className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-lg font-medium shadow-lg">
+                    <Hash className="w-5 h-5" />
+                    <span>Campaign Active</span>
+                  </div>
+                )}
                 </div>
               </div>
             </div>
@@ -645,6 +882,20 @@ export default function AdminPage() {
                 <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
                   <div>
                     <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                      Admin Status
+                    </p>
+                    <p className={cn(
+                      "text-xs font-medium",
+                      isCurrentUserAdmin ? "text-green-600 dark:text-green-300" : "text-red-600 dark:text-red-300"
+                    )}>
+                      {isCurrentUserAdmin ? 'Admin' : 'Not Admin'} ({adminCount} total admins)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
                       Active Campaign ID
                     </p>
                     <p className="font-mono text-xs text-green-600 dark:text-green-300">
@@ -665,6 +916,202 @@ export default function AdminPage() {
                 </div>
               </div>
             </div>
+
+            {/* Debug Admin Status */}
+            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 border border-gray-200 dark:border-gray-700">
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-6 flex items-center gap-2">
+                <Shield className="w-5 h-5" />
+                Admin Debug
+              </h3>
+              <div className="space-y-4">
+                <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Current Status:</p>
+                  <p className="font-mono text-sm">
+                    Address: {address || 'Not connected'}<br/>
+                    Is Admin: {isCurrentUserAdmin ? 'Yes' : 'No'}<br/>
+                    Admin Count: {adminCount}<br/>
+                    Contract Status: {contractStatus}<br/>
+                    Campaign Status: {campaignStatus}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={checkAdminStatus}
+                    className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors"
+                  >
+                    Refresh Admin Status
+                  </button>
+                  <button
+                    onClick={checkCampaignStatus}
+                    className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors"
+                  >
+                    Refresh Campaign Status
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Admin Management - Show for debugging, will be restricted later */}
+            {(isCurrentUserAdmin || true) && (
+              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 border border-gray-200 dark:border-gray-700">
+                <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-6 flex items-center gap-2">
+                  <Shield className="w-5 h-5" />
+                  Admin Management
+                </h3>
+                {!isCurrentUserAdmin && (
+                  <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg mb-6">
+                    <p className="text-yellow-800 dark:text-yellow-200 text-sm">
+                      ⚠️ Debug Mode: Admin interface is visible for testing. In production, this would only be visible to verified admins.
+                    </p>
+                  </div>
+                )}
+                <div className="space-y-6">
+                  {/* Admin Management */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="newAdminAddress" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Add Admin
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          id="newAdminAddress"
+                          type="text"
+                          value={newAdminAddress}
+                          onChange={(e) => setNewAdminAddress(e.target.value)}
+                          placeholder="Enter admin address..."
+                          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                        />
+                        <button
+                          onClick={handleAddAdmin}
+                          disabled={adminStatus.type === 'loading'}
+                          className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label htmlFor="removeAdminAddress" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Remove Admin
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          id="removeAdminAddress"
+                          type="text"
+                          value={removeAdminAddress}
+                          onChange={(e) => setRemoveAdminAddress(e.target.value)}
+                          placeholder="Enter admin address..."
+                          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                        />
+                        <button
+                          onClick={handleRemoveAdmin}
+                          disabled={adminStatus.type === 'loading'}
+                          className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Contract Controls */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <button
+                      onClick={handlePauseContract}
+                      disabled={adminStatus.type === 'loading'}
+                      className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                    >
+                      Pause Contract
+                    </button>
+                    <button
+                      onClick={handleUnpauseContract}
+                      disabled={adminStatus.type === 'loading'}
+                      className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                    >
+                      Unpause Contract
+                    </button>
+                  </div>
+
+                  {/* Token Management */}
+                  <div className="space-y-4">
+                    <div>
+                      <label htmlFor="newTokenAddress" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Update Token Address
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          id="newTokenAddress"
+                          type="text"
+                          value={newTokenAddress}
+                          onChange={(e) => setNewTokenAddress(e.target.value)}
+                          placeholder="Enter new token address..."
+                          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                        />
+                        <button
+                          onClick={handleSetTokenAddress}
+                          disabled={adminStatus.type === 'loading'}
+                          className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                        >
+                          Update
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label htmlFor="withdrawAmount" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Withdraw Amount (STRK)
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            id="withdrawAmount"
+                            type="number"
+                            step="0.1"
+                            value={withdrawAmount}
+                            onChange={(e) => setWithdrawAmount(e.target.value)}
+                            placeholder="Enter amount..."
+                            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                          />
+                          <button
+                            onClick={handleWithdrawTokens}
+                            disabled={adminStatus.type === 'loading'}
+                            className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                          >
+                            Withdraw
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-end">
+                        <button
+                          onClick={handleWithdrawAllTokens}
+                          disabled={adminStatus.type === 'loading'}
+                          className="w-full px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                        >
+                          Withdraw All Tokens
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Emergency Controls */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <button
+                      onClick={handleResetCampaign}
+                      disabled={adminStatus.type === 'loading'}
+                      className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                    >
+                      Reset Campaign
+                    </button>
+                    <button
+                      onClick={handleEmergencyWithdraw}
+                      disabled={adminStatus.type === 'loading'}
+                      className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                    >
+                      Emergency Withdraw
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </main>
       </div>

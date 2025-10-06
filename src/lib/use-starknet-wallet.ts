@@ -389,6 +389,176 @@ export function useStarknetWallet() {
     }
   };
 
+  // Admin management functions
+  const isAdmin = async (address: string) => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      console.log('🔍 Calling is_admin with address:', address);
+      const result = await contractInstance.call('is_admin', [address]);
+      console.log('🔍 Raw contract result:', result);
+      console.log('🔍 Result type:', typeof result);
+      console.log('🔍 Result constructor:', result?.constructor?.name);
+      console.log('🔍 Result toString():', result?.toString());
+      console.log('🔍 Result valueOf():', result?.valueOf());
+      console.log('🔍 JSON.stringify(result):', JSON.stringify(result));
+      
+      // Handle different return types from Starknet
+      let isAdminResult: boolean;
+      if (typeof result === 'boolean') {
+        // If it's already a boolean, use it directly
+        isAdminResult = result;
+      } else {
+        // If it's felt252, convert from string
+        const resultStr = result.toString();
+        isAdminResult = resultStr === '1' || resultStr === '0x1';
+      }
+      
+      console.log('🔍 Final admin result:', isAdminResult);
+      return isAdminResult;
+    } catch (error) {
+      console.error('❌ Error checking admin status:', error);
+      throw error;
+    }
+  };
+
+  const getAdminCount = async () => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      const result = await contractInstance.call('get_admin_count', []);
+      console.log('🔍 Admin count result:', result, 'Type:', typeof result);
+      // Convert felt252 to number
+      return Number(result.toString());
+    } catch (error) {
+      console.error('Error getting admin count:', error);
+      throw error;
+    }
+  };
+
+  const addAdmin = async (adminAddress: string) => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      const tx = await contractInstance.invoke('add_admin', [adminAddress]);
+      console.log('✅ Admin added:', tx.transaction_hash);
+      return tx;
+    } catch (error) {
+      console.error('Error adding admin:', error);
+      throw error;
+    }
+  };
+
+  const removeAdmin = async (adminAddress: string) => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      const tx = await contractInstance.invoke('remove_admin', [adminAddress]);
+      console.log('✅ Admin removed:', tx.transaction_hash);
+      return tx;
+    } catch (error) {
+      console.error('Error removing admin:', error);
+      throw error;
+    }
+  };
+
+  const pauseContract = async () => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      const tx = await contractInstance.invoke('pause_contract', []);
+      console.log('✅ Contract paused:', tx.transaction_hash);
+      return tx;
+    } catch (error) {
+      console.error('Error pausing contract:', error);
+      throw error;
+    }
+  };
+
+  const unpauseContract = async () => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      const tx = await contractInstance.invoke('unpause_contract', []);
+      console.log('✅ Contract unpaused:', tx.transaction_hash);
+      return tx;
+    } catch (error) {
+      console.error('Error unpausing contract:', error);
+      throw error;
+    }
+  };
+
+  const setTokenAddress = async (newTokenAddress: string) => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      const tx = await contractInstance.invoke('set_token_address', [newTokenAddress]);
+      console.log('✅ Token address updated:', tx.transaction_hash);
+      return tx;
+    } catch (error) {
+      console.error('Error setting token address:', error);
+      throw error;
+    }
+  };
+
+  const withdrawTokens = async (amount: bigint) => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      // Convert amount to u256 format for contract
+      const amountU256 = {
+        low: amount & BigInt('0xffffffffffffffffffffffffffffffff'),
+        high: amount >> BigInt(128)
+      };
+      
+      const tx = await contractInstance.invoke('withdraw_tokens', [amountU256]);
+      console.log('✅ Tokens withdrawn:', tx.transaction_hash);
+      return tx;
+    } catch (error) {
+      console.error('Error withdrawing tokens:', error);
+      throw error;
+    }
+  };
+
+  const withdrawAllTokens = async () => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      const tx = await contractInstance.invoke('withdraw_all_tokens', []);
+      console.log('✅ All tokens withdrawn:', tx.transaction_hash);
+      return tx;
+    } catch (error) {
+      console.error('Error withdrawing all tokens:', error);
+      throw error;
+    }
+  };
+
+  const resetCampaign = async () => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      const tx = await contractInstance.invoke('reset_campaign', []);
+      console.log('✅ Campaign reset:', tx.transaction_hash);
+      return tx;
+    } catch (error) {
+      console.error('Error resetting campaign:', error);
+      throw error;
+    }
+  };
+
+  const emergencyWithdraw = async () => {
+    const contractInstance = getContract();
+    if (!contractInstance) throw new Error('Contract not available');
+    try {
+      const tx = await contractInstance.invoke('emergency_withdraw', []);
+      console.log('✅ Emergency withdrawal:', tx.transaction_hash);
+      return tx;
+    } catch (error) {
+      console.error('Error emergency withdrawal:', error);
+      throw error;
+    }
+  };
+
 
   return {
     account,
@@ -413,5 +583,17 @@ export function useStarknetWallet() {
     getTotalClaimed,
     isLeafClaimed,
     isCodeClaimed,
+    // Admin management functions
+    isAdmin,
+    getAdminCount,
+    addAdmin,
+    removeAdmin,
+    pauseContract,
+    unpauseContract,
+    setTokenAddress,
+    withdrawTokens,
+    withdrawAllTokens,
+    resetCampaign,
+    emergencyWithdraw,
   };
 }

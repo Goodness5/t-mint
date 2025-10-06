@@ -1,157 +1,179 @@
+// Core Library Imports
+use starknet::ContractAddress;
+use core::integer::u256;
+use core::num::traits::Zero;
+
+// Define the contract interface
+#[starknet::interface]
+pub trait IClaim<TContractState> {
+    fn set_merkle_root(ref self: TContractState, new_root: felt252);
+    fn claim_tokens(ref self: TContractState, code: felt252, amount: u256, proof: Span<felt252>);
+    fn get_merkle_root(self: @TContractState) -> felt252;
+    fn get_total_claimed(self: @TContractState) -> u256;
+    fn is_leaf_claimed(self: @TContractState, leaf_hash: felt252) -> bool;
+    fn is_code_claimed(self: @TContractState, code: felt252, amount: u256) -> bool;
+}
+
 #[starknet::contract]
 pub mod ClaimContract {
     use starknet::{
-        ContractAddress, ClassHash, get_caller_address, get_block_timestamp,
+        ContractAddress, get_caller_address,
         storage::{
-            Map, Vec, VecTrait, MutableVecTrait, StoragePointerReadAccess,
-            StoragePointerWriteAccess, StoragePathEntry, StoragePath}
+            Map,
+            StoragePointerReadAccess,
+            StoragePointerWriteAccess,
+            StorageMapReadAccess,
+            StorageMapWriteAccess,
+            StoragePathEntry,
+        },
     };
     use core::integer::u256;
+    use core::array::ArrayTrait;
+    use core::hash::{HashStateExTrait, HashStateTrait};
+    use core::poseidon::PoseidonTrait;
     use core::num::traits::Zero;
+    use openzeppelin::access::ownable::{OwnableComponent, OwnableComponent::InternalTrait};
+    use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+    use openzeppelin::merkle_tree::merkle_proof;
 
-    #[derive(Drop, starknet::Store)]
-    struct ClaimInfo {
-        amount: u256,
-        used: bool,
+    component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
+
+    // Internal impl for Ownable
+    impl OwnableInternalImpl = OwnableComponent::InternalImpl<ContractState>;
+
+    // Custom Poseidon-based Merkle proof verification with commutative hashing
+    fn verify_poseidon_proof(proof: Span<felt252>, root: felt252, leaf: felt252) -> bool {
+        let mut current_hash = leaf;
+        let mut proof_index = 0;
+        
+        while proof_index < proof.len() {
+            let proof_element = *proof.at(proof_index);
+            
+            // Use commutative hashing: always hash the smaller value first
+            // Convert to u256 for comparison since u256 supports PartialOrd
+            let current_u256: u256 = current_hash.into();
+            let proof_u256: u256 = proof_element.into();
+            
+            let mut hash_state = PoseidonTrait::new();
+            if current_u256 <= proof_u256 {
+                hash_state = hash_state.update_with(current_hash);
+                hash_state = hash_state.update_with(proof_element);
+            } else {
+                hash_state = hash_state.update_with(proof_element);
+                hash_state = hash_state.update_with(current_hash);
+            }
+            current_hash = hash_state.finalize();
+            
+            proof_index += 1;
+        }
+        
+        current_hash == root
     }
 
     #[storage]
-    struct Storage {
-        admins: Map<ContractAddress, bool>,
+    pub struct Storage {
+        #[substorage(v0)]
+        ownable: OwnableComponent::Storage,
         token: ContractAddress,
-        claim_codes: Map<felt252, ClaimInfo>,
+        merkle_root: felt252,
+        claimed_leaves: Map<felt252, bool>,
         total_claimed: u256,
-    }
-
-    #[starknet::interface]
-    trait IERC20<TContractState> {
-        fn transfer(ref self: TContractState, recipient: ContractAddress, amount: u256) -> bool;
     }
 
     #[event]
     #[derive(Drop, starknet::Event)]
     pub enum Event {
-        ClaimCodeGenerated: ClaimCodeGenerated,
+        #[flat]
+        OwnableEvent: OwnableComponent::Event,
+        MerkleRootUpdated: MerkleRootUpdated,
         TokensClaimed: TokensClaimed,
-        AdminAdded: AdminAdded,
-        AdminRemoved: AdminRemoved,
     }
 
     #[derive(Drop, starknet::Event)]
-    pub struct ClaimCodeGenerated {
+    pub struct MerkleRootUpdated {
         #[key]
-        code: felt252,
-        amount: u256,
+        old_root: felt252,
+        #[key]
+        new_root: felt252,
     }
 
     #[derive(Drop, starknet::Event)]
     pub struct TokensClaimed {
         #[key]
-        code: felt252,
+        leaf_hash: felt252,
+        claim_code: felt252,
         recipient: ContractAddress,
         amount: u256,
     }
 
-    #[derive(Drop, starknet::Event)]
-    pub struct AdminAdded {
-        admin: ContractAddress,
-        added_by: ContractAddress,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    pub struct AdminRemoved {
-        admin: ContractAddress,
-        removed_by: ContractAddress,
-    }
-
-    #[generate_trait]
-    impl Internal of InternalTrait {
-        fn only_admin(self: @ContractState) {
-            let caller = get_caller_address();
-            let is_admin = self.admins.entry(caller).read();
-            assert(is_admin, 'unauthorized');
-        }
-    }
-
     #[constructor]
-    fn constructor(ref self: ContractState, admin_address: ContractAddress, token_address: ContractAddress) {
-        self.admins.entry(admin_address).write(true);
+    fn constructor(ref self: ContractState, owner_address: ContractAddress, token_address: ContractAddress, initial_merkle_root: felt252) {
+        self.ownable.initializer(owner_address);
         self.token.write(token_address);
-        self.total_claimed.write(0_u256);
-    }
-
-    #[starknet::interface]
-    pub trait IClaim<TContractState> {
-        fn generate_claim_code(ref self: TContractState, code: felt252, amount: u256);
-        fn add_admin(ref self: TContractState, admin: ContractAddress);
-        fn remove_admin(ref self: TContractState, admin: ContractAddress);
-        fn claim_tokens(ref self: TContractState, code: felt252);
-        fn get_claim_code_info(self: @TContractState, code: felt252) -> (u256, bool);
-        fn get_total_claimed(self: @TContractState) -> u256;
-        fn is_code_used(self: @TContractState, code: felt252) -> bool;
-        fn is_admin(self: @TContractState, admin: ContractAddress) -> bool;
+        self.merkle_root.write(initial_merkle_root);
+        self.total_claimed.write(Zero::zero());
     }
 
     #[abi(embed_v0)]
-    impl ClaimImpl of IClaim<ContractState> {
-        fn generate_claim_code(ref self: ContractState, code: felt252, amount: u256) {
-            InternalTrait::only_admin(@self);
-            let info = self.claim_codes.entry(code).read();
-            assert(info.amount == 0_u256, 'Code already exists');
-            self.claim_codes.entry(code).write(ClaimInfo { amount, used: false });
-            self.emit(Event::ClaimCodeGenerated(ClaimCodeGenerated { code, amount }));
+    pub impl ClaimImpl of super::IClaim<ContractState> {
+        fn set_merkle_root(ref self: ContractState, new_root: felt252) {
+            self.ownable.assert_only_owner();
+            let old_root = self.merkle_root.read();
+            self.merkle_root.write(new_root);
+            self.emit(Event::MerkleRootUpdated(MerkleRootUpdated { old_root, new_root }));
         }
 
-        fn add_admin(ref self: ContractState, admin: ContractAddress) {
-            InternalTrait::only_admin(@self);
+        fn claim_tokens(ref self: ContractState, code: felt252, amount: u256, proof: Span<felt252>) {
             let caller = get_caller_address();
-            assert(admin != Zero::zero(), 'Invalid admin address');
-            let is_already_admin = self.admins.entry(admin).read();
-            assert(!is_already_admin, 'Address is already admin');
-            self.admins.entry(admin).write(true);
-            self.emit(Event::AdminAdded(AdminAdded { admin, added_by: caller }));
-        }
 
-        fn remove_admin(ref self: ContractState, admin: ContractAddress) {
-            InternalTrait::only_admin(@self);
-            let caller = get_caller_address();
-            assert(caller != admin, 'Cannot remove self');
-            let is_admin = self.admins.entry(admin).read();
-            assert(is_admin, 'Address is not admin');
-            self.admins.entry(admin).write(false);
-            self.emit(Event::AdminRemoved(AdminRemoved { admin, removed_by: caller }));
-        }
+            let mut hash_state = PoseidonTrait::new();
+            hash_state = hash_state.update_with(code);
+            hash_state = hash_state.update_with(amount.low);
+            hash_state = hash_state.update_with(amount.high);
+            let leaf_hash = hash_state.finalize();
 
-        fn claim_tokens(ref self: ContractState, code: felt252) {
-            let caller = get_caller_address();
-            let info = self.claim_codes.entry(code).read();
-            assert(info.amount != 0_u256, 'Invalid claim code');
-            assert(!info.used, 'Code already used');
-            self.claim_codes.entry(code).write(ClaimInfo { amount: info.amount, used: true });
-            let current_total = self.total_claimed.read();
-            self.total_claimed.write(current_total + info.amount);
+            let claimed = self.claimed_leaves.entry(leaf_hash).read();
+            assert!(!claimed, "Code already used");
+
+            let current_merkle_root = self.merkle_root.read();
+            assert!(!current_merkle_root.is_zero(), "Merkle root not set");
+
+            // Custom Poseidon-based proof verification to match our frontend
+            let is_valid_proof = verify_poseidon_proof(proof, current_merkle_root, leaf_hash);
+            assert!(is_valid_proof, "Invalid Merkle proof for code");
+
+            self.claimed_leaves.entry(leaf_hash).write(true);
+
             let token = self.token.read();
-            let success = IERC20Dispatcher { contract_address: token }.transfer(caller, info.amount);
-            assert(success, 'Token transfer failed');
-            self.emit(Event::TokensClaimed(TokensClaimed { code, recipient: caller, amount: info.amount }));
+            let dispatcher = IERC20Dispatcher { contract_address: token };
+            let success = IERC20DispatcherTrait::transfer(dispatcher, caller, amount);
+            assert!(success, "Token transfer failed");
+
+            let current_total = self.total_claimed.read();
+            self.total_claimed.write(current_total + amount);
+
+            self.emit(Event::TokensClaimed(TokensClaimed { leaf_hash, claim_code: code, recipient: caller, amount }));
         }
 
-        fn get_claim_code_info(self: @ContractState, code: felt252) -> (u256, bool) {
-            let info = self.claim_codes.entry(code).read();
-            (info.amount, info.used)
+        fn get_merkle_root(self: @ContractState) -> felt252 {
+            self.merkle_root.read()
         }
 
         fn get_total_claimed(self: @ContractState) -> u256 {
             self.total_claimed.read()
         }
 
-        fn is_code_used(self: @ContractState, code: felt252) -> bool {
-            let info = self.claim_codes.entry(code).read();
-            info.used
+        fn is_leaf_claimed(self: @ContractState, leaf_hash: felt252) -> bool {
+            self.claimed_leaves.entry(leaf_hash).read()
         }
 
-        fn is_admin(self: @ContractState, admin: ContractAddress) -> bool {
-            self.admins.entry(admin).read()
+        fn is_code_claimed(self: @ContractState, code: felt252, amount: u256) -> bool {
+            let mut hash_state = PoseidonTrait::new();
+            hash_state = hash_state.update_with(code);
+            hash_state = hash_state.update_with(amount.low);
+            hash_state = hash_state.update_with(amount.high);
+            let leaf_hash = hash_state.finalize();
+            self.claimed_leaves.entry(leaf_hash).read()
         }
     }
 }

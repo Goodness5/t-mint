@@ -19,15 +19,15 @@ export default function WalletButton({
   className 
 }: WalletButtonProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [funnyText, setFunnyText] = useState('');
+  const [statusText, setStatusText] = useState('');
 
   const { address, isConnected } = useAccount();
-  const { connect, connectors } = useConnect();
+  const { connect, connectors, isPending } = useConnect();
   const { disconnect } = useDisconnect();
 
   useEffect(() => {
-    // Set initial funny text on client side only
-    setFunnyText(getRandomFunnyText('welcome'));
+    // Set initial status text on client side only
+    setStatusText(getRandomFunnyText('welcome'));
   }, []);
 
   useEffect(() => {
@@ -46,7 +46,7 @@ export default function WalletButton({
   const handleDisconnect = async () => {
     try {
       await disconnect();
-      setFunnyText(getRandomFunnyText('welcome'));
+      setStatusText(getRandomFunnyText('welcome'));
     } catch (error) {
       console.error('Failed to disconnect wallet:', error);
     }
@@ -81,25 +81,25 @@ export default function WalletButton({
       <div className={cn("space-y-3", className)}>
         <button
           onClick={handleOpenModal}
-          disabled={status === 'connecting'}
+          disabled={isPending}
           className={cn(
             "flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white rounded-xl font-medium transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none shadow-lg hover:shadow-xl",
-            status === 'connecting' && "animate-pulse"
+            isPending && "animate-pulse"
           )}
         >
-          {status === 'connecting' ? (
+          {isPending ? (
             <Loader2 className="w-5 h-5 animate-spin" />
           ) : (
             <Wallet className="w-5 h-5" />
           )}
           <span>
-            {status === 'connecting' ? 'Connecting...' : 'Connect Wallet'}
+            {isPending ? 'Connecting...' : 'Connect Wallet'}
           </span>
         </button>
         
-        {funnyText && (
+        {statusText && (
           <p className="text-sm text-gray-600 dark:text-gray-400 text-center max-w-xs mx-auto">
-            {funnyText}
+            {statusText}
           </p>
         )}
       </div>

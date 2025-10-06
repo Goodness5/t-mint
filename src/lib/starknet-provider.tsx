@@ -7,7 +7,8 @@ import { argent, braavos, ready } from '@starknet-react/core';
 
 // Configure the Starknet provider with reliable RPC endpoints
 export function StarknetProvider({ children }: { children: ReactNode }) {
-  const chains = [mainnet, sepolia];
+  // Use testnet (sepolia) as default, with mainnet as fallback
+  const chains = [sepolia, mainnet];
   
   // Use public provider with fallback RPC endpoints
   const provider = publicProvider();
@@ -17,7 +18,7 @@ export function StarknetProvider({ children }: { children: ReactNode }) {
       chains={chains}
       provider={provider}
       connectors={[
-        argent(),
+        // argent(),
         braavos(),
         ready(),
       ]}

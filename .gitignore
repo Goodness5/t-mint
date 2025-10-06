@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# starknet account files (contain sensitive data)
+contracts/target/account*.json
+contracts/account*.json
+*.keystore.json
